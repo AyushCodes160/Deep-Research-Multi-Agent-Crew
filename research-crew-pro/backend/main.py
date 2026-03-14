@@ -7,6 +7,8 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from database import save_report, get_all_reports, get_report_by_id
+
 from crewai import Crew, Process
 from agents import create_researcher, create_fact_checker, create_writer
 from tasks import create_research_task, create_fact_check_task, create_write_task
@@ -54,8 +56,13 @@ def run_crew_in_thread(topic: str):
         )
         
         result = crew.kickoff()
+        
+        # Save completed report to database
+        report_text = str(result)
+        save_report(topic, report_text)
+        
         # Signal the end with a special keyword
-        log_queue.put(f"\n[[FINAL_REPORT]]\n{result}")
+        log_queue.put(f"\n[[FINAL_REPORT]]\n{report_text}")
     except Exception as e:
         log_queue.put(f"\n[[ERROR]]\n{str(e)}")
     finally:
@@ -75,6 +82,19 @@ async def start_research(req: ResearchRequest):
     # Start Crew in a background thread so it doesn't block FastAPI's event loop
     Thread(target=run_crew_in_thread, args=(req.topic,)).start()
     return {"status": "started", "topic": req.topic}
+
+@app.get("/api/reports")
+async def list_reports():
+    """Get all saved research reports."""
+    return get_all_reports()
+
+@app.get("/api/reports/{report_id}")
+async def get_report(report_id: int):
+    """Get a specific report by ID."""
+    report = get_report_by_id(report_id)
+    if not report:
+        return {"error": "Report not found"}
+    return report
 
 @app.websocket("/ws/research")
 async def websocket_endpoint(websocket: WebSocket):
